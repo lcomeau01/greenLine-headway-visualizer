@@ -1,0 +1,5 @@
+duckdb
+flask
+flask-cors
+numpy
+pandas

@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Green Line Stress Analysis Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" alt="MBTA logo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='black'/%3E%3Ccircle cx='50' cy='50' r='46' fill='white'/%3E%3Cpath d='M18 29h64v17H59v39H41V46H18z' fill='black'/%3E%3C/svg%3E">
+        <h1>Green Line Stress Analysis Dashboard</h1>
+      </div>
+      <div class="top-actions" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+    </header>
+
+    <section class="dashboard">
+      <aside class="filters" aria-label="Filters">
+        <h2>Filters</h2>
+        <div class="rule"></div>
+
+        <div class="control-group">
+          <label for="weather">Weather</label>
+          <select id="weather">
+            <option value="clear" selected>Clear</option>
+            <option value="rain">Rain</option>
+            <option value="snow">Snow</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Precipitation</label>
+          <div class="range-pair">
+            <input id="min-precipitation" type="range" min="0" max="3" step="0.05" value="0">
+            <input id="max-precipitation" type="range" min="0" max="3" step="0.05" value="3">
+          </div>
+          <div class="range-line">
+            <span id="precipitation-min">0.00 in</span>
+            <strong>to</strong>
+            <span id="precipitation-max">3 in</span>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="alert-filter">Alerts</label>
+          <select id="alert-filter">
+            <option value="no_alert" selected>No alert</option>
+            <option value="severity">By severity</option>
+          </select>
+          <div class="field-note">
+            <span>Severity</span>
+            <strong id="alert-value">0 to 10</strong>
+          </div>
+          <div class="range-pair">
+            <input id="min-alert-severity" type="range" min="0" max="10" step="1" value="0">
+            <input id="max-alert-severity" type="range" min="0" max="10" step="1" value="10">
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="demand-level">Ridership</label>
+          <select id="demand-level">
+            <option value="low">Low</option>
+            <option value="medium" selected>Average</option>
+            <option value="high">High</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Time Period</label>
+          <div class="segmented two" id="time-buttons">
+            <button type="button" class="active" data-value="peak">Peak</button>
+            <button type="button" data-value="offpeak">Off-Peak</button>
+          </div>
+          <div class="segmented three" id="day-buttons">
+            <button type="button" class="active" data-value="all">All</button>
+            <button type="button" data-value="weekday">Weekday</button>
+            <button type="button" data-value="weekend">Weekend</button>
+          </div>
+        </div>
+
+        <div class="control-group compact">
+          <label>Temperature</label>
+          <div class="range-pair">
+            <input id="min-temperature" type="range" min="-10" max="100" step="1" value="-10">
+            <input id="max-temperature" type="range" min="-10" max="100" step="1" value="100">
+          </div>
+          <div class="range-line">
+            <span id="temperature-min">Any</span>
+            <strong>to</strong>
+            <span id="temperature-max">Any</span>
+          </div>
+        </div>
+
+        <div class="control-group compact">
+          <label>Snow</label>
+          <div class="range-pair">
+            <input id="min-snow" type="range" min="0" max="12" step="0.1" value="0">
+            <input id="max-snow" type="range" min="0" max="12" step="0.1" value="12">
+          </div>
+          <div class="range-line">
+            <span id="snow-min">0.0 in</span>
+            <strong>to</strong>
+            <span id="snow-max">12.0 in</span>
+          </div>
+        </div>
+
+        <div class="filter-actions">
+          <button id="reset-filters" class="reset" type="button">Reset</button>
+          <button id="apply-filters" class="apply" type="button">Apply Filters</button>
+        </div>
+      </aside>
+
+      <section class="content">
+        <section class="panel chart-card">
+          <h2 id="chart-title">Average Headway by Branch</h2>
+          <svg id="bar-chart" role="img" aria-label="Headway by Green Line branch"></svg>
+          <div class="metric-tabs" id="metric-tabs" aria-label="Metric selector"></div>
+        </section>
+
+        <section class="lower-grid">
+          <div class="panel gauge-card">
+            <svg id="stress-gauge" role="img" aria-label="Stress gauge"></svg>
+            <strong id="stress-label">Moderate Stress</strong>
+            <span id="sample-size">0 samples</span>
+          </div>
+
+          <div class="panel detail-card">
+            <h2 id="detail-title">Branch Details</h2>
+            <div id="selected-branch-pill" class="selected-pill">Selected branch</div>
+            <div class="detail-list">
+              <div>
+                <span>Mean Headway:</span>
+                <strong id="detail-mean">0.0 min</strong>
+              </div>
+              <div>
+                <span>Median Headway:</span>
+                <strong id="detail-median">0.0 min</strong>
+              </div>
+              <div>
+                <span>Std Dev:</span>
+                <strong id="detail-std">0.0 min</strong>
+              </div>
+              <div>
+                <span>Min Headway:</span>
+                <strong id="detail-min">0.0 min</strong>
+              </div>
+              <div>
+                <span>Max Headway:</span>
+                <strong id="detail-max">0.0 min</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="scatter-grid">
+          <div class="panel scatter-card">
+            <h2>Stress vs Mean Headway</h2>
+            <svg id="stress-scatter" role="img" aria-label="Scatterplot of stress index versus mean headway"></svg>
+          </div>
+          <div class="panel scatter-card">
+            <h2>Mean Headway vs Time of Day</h2>
+            <svg id="time-scatter" role="img" aria-label="Scatterplot of mean headway versus time of day"></svg>
+          </div>
+        </section>
+      </section>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
