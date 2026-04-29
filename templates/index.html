@@ -28,63 +28,11 @@
         <div class="control-group">
           <label for="weather">Weather</label>
           <select id="weather">
-            <option value="clear" selected>Clear</option>
+            <option value="clear">Clear</option>
             <option value="rain">Rain</option>
             <option value="snow">Snow</option>
-            <option value="all">All</option>
+            <option value="all" selected>All</option>
           </select>
-        </div>
-
-        <div class="control-group">
-          <label>Precipitation</label>
-          <div class="range-pair">
-            <input id="min-precipitation" type="range" min="0" max="3" step="0.05" value="0">
-            <input id="max-precipitation" type="range" min="0" max="3" step="0.05" value="3">
-          </div>
-          <div class="range-line">
-            <span id="precipitation-min">0.00 in</span>
-            <strong>to</strong>
-            <span id="precipitation-max">3 in</span>
-          </div>
-        </div>
-
-        <div class="control-group">
-          <label for="alert-filter">Alerts</label>
-          <select id="alert-filter">
-            <option value="no_alert" selected>No alert</option>
-            <option value="severity">By severity</option>
-          </select>
-          <div class="field-note">
-            <span>Severity</span>
-            <strong id="alert-value">0 to 10</strong>
-          </div>
-          <div class="range-pair">
-            <input id="min-alert-severity" type="range" min="0" max="10" step="1" value="0">
-            <input id="max-alert-severity" type="range" min="0" max="10" step="1" value="10">
-          </div>
-        </div>
-
-        <div class="control-group">
-          <label for="demand-level">Ridership</label>
-          <select id="demand-level">
-            <option value="low">Low</option>
-            <option value="medium" selected>Average</option>
-            <option value="high">High</option>
-            <option value="all">All</option>
-          </select>
-        </div>
-
-        <div class="control-group">
-          <label>Time Period</label>
-          <div class="segmented two" id="time-buttons">
-            <button type="button" class="active" data-value="peak">Peak</button>
-            <button type="button" data-value="offpeak">Off-Peak</button>
-          </div>
-          <div class="segmented three" id="day-buttons">
-            <button type="button" class="active" data-value="all">All</button>
-            <button type="button" data-value="weekday">Weekday</button>
-            <button type="button" data-value="weekend">Weekend</button>
-          </div>
         </div>
 
         <div class="control-group compact">
@@ -113,6 +61,69 @@
           </div>
         </div>
 
+        <div class="control-group">
+          <label for="wind-level">Wind</label>
+          <select id="wind-level">
+            <option value="all" selected>All</option>
+            <option value="calm">Calm</option>
+            <option value="breezy">Breezy</option>
+            <option value="windy">Windy</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Precipitation</label>
+          <div class="range-pair">
+            <input id="min-precipitation" type="range" min="0" max="3" step="0.05" value="0">
+            <input id="max-precipitation" type="range" min="0" max="3" step="0.05" value="3">
+          </div>
+          <div class="range-line">
+            <span id="precipitation-min">0.00 in</span>
+            <strong>to</strong>
+            <span id="precipitation-max">3 in</span>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="alert-filter">Alerts</label>
+          <select id="alert-filter">
+            <option value="no_alert">No alert</option>
+            <option value="severity" selected>By severity</option>
+          </select>
+          <div class="field-note">
+            <span>Severity</span>
+            <strong id="alert-value">0 to 10</strong>
+          </div>
+          <div class="range-pair">
+            <input id="min-alert-severity" type="range" min="0" max="10" step="1" value="0">
+            <input id="max-alert-severity" type="range" min="0" max="10" step="1" value="10">
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="demand-level">Ridership</label>
+          <select id="demand-level">
+            <option value="low">Low</option>
+            <option value="medium">Average</option>
+            <option value="high">High</option>
+            <option value="all" selected>All</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Time Period</label>
+          <div class="segmented three" id="time-buttons">
+            <button type="button" class="active" data-value="all">All Hours</button>
+            <button type="button" data-value="peak">Peak</button>
+            <button type="button" data-value="offpeak">Off-Peak</button>
+          </div>
+          <div class="segmented three" id="day-buttons">
+            <button type="button" class="active" data-value="all">All</button>
+            <button type="button" data-value="weekday">Weekday</button>
+            <button type="button" data-value="weekend">Weekend</button>
+          </div>
+        </div>
+
         <div class="filter-actions">
           <button id="reset-filters" class="reset" type="button">Reset</button>
           <button id="apply-filters" class="apply" type="button">Apply Filters</button>
@@ -121,41 +132,44 @@
 
       <section class="content">
         <section class="panel chart-card">
-          <h2 id="chart-title">Average Headway by Branch</h2>
+          <div class="chart-heading">
+            <h2 id="chart-title">Average Headway by Branch</h2>
+            <span id="selected-branch-pill" class="selected-branch-pill">Selected Branch: Green-B</span>
+          </div>
           <svg id="bar-chart" role="img" aria-label="Headway by Green Line branch"></svg>
           <div class="metric-tabs" id="metric-tabs" aria-label="Metric selector"></div>
         </section>
 
-        <section class="lower-grid">
-          <div class="panel gauge-card">
-            <svg id="stress-gauge" role="img" aria-label="Stress gauge"></svg>
-            <strong id="stress-label">Moderate Stress</strong>
-            <span id="sample-size">0 samples</span>
-          </div>
-
-          <div class="panel detail-card">
-            <h2 id="detail-title">Branch Details</h2>
-            <div id="selected-branch-pill" class="selected-pill">Selected branch</div>
+        <section class="panel detail-card full-width">
+          <h2 id="detail-title">Selected Branch Details</h2>
+          <span id="sample-size" class="sample-note">0 samples</span>
+          <div class="detail-layout">
             <div class="detail-list">
-              <div>
+              <button type="button" class="detail-stat active" data-station-metric="mean_headway">
                 <span>Mean Headway:</span>
                 <strong id="detail-mean">0.0 min</strong>
-              </div>
-              <div>
+              </button>
+              <button type="button" class="detail-stat" data-station-metric="median_headway">
                 <span>Median Headway:</span>
                 <strong id="detail-median">0.0 min</strong>
-              </div>
-              <div>
+              </button>
+              <button type="button" class="detail-stat" data-station-metric="std_headway">
                 <span>Std Dev:</span>
                 <strong id="detail-std">0.0 min</strong>
-              </div>
-              <div>
+              </button>
+              <button type="button" class="detail-stat" data-station-metric="min_headway">
                 <span>Min Headway:</span>
                 <strong id="detail-min">0.0 min</strong>
-              </div>
-              <div>
+              </button>
+              <button type="button" class="detail-stat" data-station-metric="max_headway">
                 <span>Max Headway:</span>
                 <strong id="detail-max">0.0 min</strong>
+              </button>
+            </div>
+            <div class="station-chart-wrap">
+              <h3 id="station-title">Mean Headway by Station</h3>
+              <div class="station-chart-scroll">
+                <svg id="station-chart" role="img" aria-label="Mean headway by station for selected branch"></svg>
               </div>
             </div>
           </div>
@@ -163,12 +177,12 @@
 
         <section class="scatter-grid">
           <div class="panel scatter-card">
-            <h2>Stress vs Mean Headway</h2>
-            <svg id="stress-scatter" role="img" aria-label="Scatterplot of stress index versus mean headway"></svg>
-          </div>
-          <div class="panel scatter-card">
             <h2>Mean Headway vs Time of Day</h2>
             <svg id="time-scatter" role="img" aria-label="Scatterplot of mean headway versus time of day"></svg>
+          </div>
+          <div class="panel scatter-card">
+            <h2>Mean Headway vs Branch Attendance</h2>
+            <svg id="attendance-scatter" role="img" aria-label="Scatterplot of mean headway versus branch attendance"></svg>
           </div>
         </section>
       </section>

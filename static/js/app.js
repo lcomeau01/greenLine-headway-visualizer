@@ -1,14 +1,23 @@
 const state = {
   metrics: [],
   selectedMetric: "mean_headway",
+  selectedStationMetric: "mean_headway",
   selectedBranch: null,
   branches: [],
-  scatter: [],
   timeOfDay: [],
-  stressIndex: 0,
+  attendance: [],
+  stations: {},
   resizeTimer: null,
-  timePeriod: "peak",
+  timePeriod: "all",
   dayType: "all"
+};
+
+const stationMetricMeta = {
+  mean_headway: { label: "Mean" },
+  median_headway: { label: "Median" },
+  std_headway: { label: "Std Dev" },
+  min_headway: { label: "Min" },
+  max_headway: { label: "Max" }
 };
 
 const colors = new Map([
@@ -18,8 +27,22 @@ const colors = new Map([
   ["Green-E", "#a6d84f"]
 ]);
 
+const alertSeverityByType = new Map([
+  ["SUSPENSION", "Severe"],
+  ["STATION_CLOSURE", "Severe"],
+  ["SHUTTLE", "High"],
+  ["DELAY", "High"],
+  ["SERVICE_CHANGE", "Moderate"],
+  ["ELEVATOR_CLOSURE", "Moderate"],
+  ["ESCALATOR_CLOSURE", "Moderate"],
+  ["STATION_ISSUE", "Moderate"],
+  ["PARKING_CLOSURE", "Low"],
+  ["PARKING_ISSUE", "Low"]
+]);
+
 const controls = {
   weather: document.querySelector("#weather"),
+  windLevel: document.querySelector("#wind-level"),
   demandLevel: document.querySelector("#demand-level"),
   alertFilter: document.querySelector("#alert-filter"),
   minAlertSeverity: document.querySelector("#min-alert-severity"),
@@ -43,10 +66,10 @@ const labels = {
   snowMin: document.querySelector("#snow-min"),
   snowMax: document.querySelector("#snow-max"),
   sample: document.querySelector("#sample-size"),
-  stress: document.querySelector("#stress-label"),
   chartTitle: document.querySelector("#chart-title"),
-  selectedBranch: document.querySelector("#selected-branch-pill"),
+  selectedBranchPill: document.querySelector("#selected-branch-pill"),
   detailTitle: document.querySelector("#detail-title"),
+  stationTitle: document.querySelector("#station-title"),
   detailMean: document.querySelector("#detail-mean"),
   detailMedian: document.querySelector("#detail-median"),
   detailStd: document.querySelector("#detail-std"),
@@ -71,17 +94,12 @@ async function initialize() {
   controls.minTemperature.max = Math.ceil(data.ranges.max_temperature ?? 100);
   controls.maxTemperature.min = controls.minTemperature.min;
   controls.maxTemperature.max = controls.minTemperature.max;
-  controls.minTemperature.value = controls.minTemperature.min;
-  controls.maxTemperature.value = controls.maxTemperature.max;
   controls.minPrecipitation.max = Math.max(0.1, data.ranges.max_precipitation ?? 3);
   controls.maxPrecipitation.max = controls.minPrecipitation.max;
-  controls.maxPrecipitation.value = controls.maxPrecipitation.max;
   controls.minSnow.max = Math.max(0.1, data.ranges.max_snow ?? 12);
   controls.maxSnow.max = controls.minSnow.max;
-  controls.maxSnow.value = controls.maxSnow.max;
   controls.minAlertSeverity.max = Math.max(10, data.ranges.max_alert_severity ?? 10);
   controls.maxAlertSeverity.max = controls.minAlertSeverity.max;
-  controls.maxAlertSeverity.value = controls.maxAlertSeverity.max;
   bindControls();
   resetFilters(false);
   await updateFromFilters();
@@ -106,28 +124,69 @@ function bindControls() {
       setActive("#day-buttons", button);
     });
   });
+  document.querySelectorAll(".detail-stat").forEach(button => {
+    button.addEventListener("click", () => {
+      state.selectedStationMetric = button.dataset.stationMetric;
+      renderDetails();
+      renderStationChart();
+    });
+  });
   [
     [controls.minTemperature, controls.maxTemperature],
     [controls.minPrecipitation, controls.maxPrecipitation],
     [controls.minSnow, controls.maxSnow],
     [controls.minAlertSeverity, controls.maxAlertSeverity]
   ].forEach(pair => {
-    pair.forEach(control => control.addEventListener("input", () => {
-      normalizePair(pair[0], pair[1], control);
-      updateLabels();
-    }));
+    pair.forEach(control => {
+      control.addEventListener("pointerdown", () => raiseRange(control));
+      control.addEventListener("input", () => {
+        normalizePair(pair[0], pair[1], control);
+        updateLabels();
+      });
+    });
   });
-  controls.weather.addEventListener("change", updateWeatherControls);
+  controls.weather.addEventListener("change", updateLabels);
   controls.alertFilter.addEventListener("change", updateLabels);
-  controls.reset.addEventListener("click", () => {
-    resetFilters(true);
-  });
+  controls.reset.addEventListener("click", () => resetFilters(true));
   controls.apply.addEventListener("click", updateFromFilters);
   window.addEventListener("resize", () => {
     clearTimeout(state.resizeTimer);
     state.resizeTimer = setTimeout(render, 120);
   });
+}
+
+function raiseRange(control) {
+  const pair = control.closest(".range-pair");
+  if (!pair) {
+    return;
+  }
+  pair.querySelectorAll('input[type="range"]').forEach((item, index) => {
+    item.style.zIndex = item === control ? "100" : String(index + 90);
+  });
+}
+
+function resetFilters(shouldFetch) {
+  controls.weather.value = "all";
+  controls.windLevel.value = "all";
+  controls.demandLevel.value = "all";
+  controls.alertFilter.value = "severity";
+  controls.minAlertSeverity.value = controls.minAlertSeverity.min;
+  controls.maxAlertSeverity.value = controls.maxAlertSeverity.max;
+  controls.minTemperature.value = controls.minTemperature.min;
+  controls.maxTemperature.value = controls.maxTemperature.max;
+  controls.minPrecipitation.value = controls.minPrecipitation.min;
+  controls.maxPrecipitation.value = controls.maxPrecipitation.max;
+  controls.minSnow.value = controls.minSnow.min;
+  controls.maxSnow.value = controls.maxSnow.max;
+  state.selectedStationMetric = "mean_headway";
+  state.timePeriod = "all";
+  state.dayType = "all";
+  document.querySelectorAll("#time-buttons button").forEach(button => button.classList.toggle("active", button.dataset.value === "all"));
+  document.querySelectorAll("#day-buttons button").forEach(button => button.classList.toggle("active", button.dataset.value === "all"));
   updateLabels();
+  if (shouldFetch) {
+    updateFromFilters();
+  }
 }
 
 function normalizePair(minControl, maxControl, changedControl) {
@@ -145,20 +204,6 @@ function setActive(selector, activeButton) {
 }
 
 function updateLabels() {
-  updateWeatherControls();
-  const severityActive = controls.alertFilter.value === "severity";
-  controls.minAlertSeverity.disabled = !severityActive;
-  controls.maxAlertSeverity.disabled = !severityActive;
-  labels.alert.textContent = controls.alertFilter.value === "no_alert" ? "None" : `${controls.minAlertSeverity.value} to ${controls.maxAlertSeverity.value}`;
-  labels.temperatureMin.textContent = controls.minTemperature.value === controls.minTemperature.min ? "Any" : `${controls.minTemperature.value}°F`;
-  labels.temperatureMax.textContent = controls.maxTemperature.value === controls.maxTemperature.max ? "Any" : `${controls.maxTemperature.value}°F`;
-  labels.precipitationMin.textContent = `${Number(controls.minPrecipitation.value).toFixed(2)} in`;
-  labels.precipitationMax.textContent = `${Number(controls.maxPrecipitation.value).toFixed(2)} in`;
-  labels.snowMin.textContent = `${Number(controls.minSnow.value).toFixed(1)} in`;
-  labels.snowMax.textContent = `${Number(controls.maxSnow.value).toFixed(1)} in`;
-}
-
-function updateWeatherControls() {
   const weather = controls.weather.value;
   const precipitationActive = weather === "rain" || weather === "all";
   const snowActive = weather === "snow" || weather === "all";
@@ -168,35 +213,27 @@ function updateWeatherControls() {
   [controls.minSnow, controls.maxSnow].forEach(control => {
     control.disabled = !snowActive;
   });
-  labels.precipitationMin.parentElement.parentElement.classList.toggle("disabled", !precipitationActive);
-  labels.snowMin.parentElement.parentElement.classList.toggle("disabled", !snowActive);
-}
-
-function resetFilters(shouldFetch) {
-  controls.weather.value = "clear";
-  controls.demandLevel.value = "medium";
-  controls.alertFilter.value = "no_alert";
-  controls.minAlertSeverity.value = controls.minAlertSeverity.min;
-  controls.maxAlertSeverity.value = controls.maxAlertSeverity.max;
-  controls.minTemperature.value = controls.minTemperature.min;
-  controls.maxTemperature.value = controls.maxTemperature.max;
-  controls.minPrecipitation.value = controls.minPrecipitation.min;
-  controls.maxPrecipitation.value = controls.maxPrecipitation.max;
-  controls.minSnow.value = controls.minSnow.min;
-  controls.maxSnow.value = controls.maxSnow.max;
-  state.timePeriod = "peak";
-  state.dayType = "all";
-  document.querySelectorAll("#time-buttons button").forEach(button => button.classList.toggle("active", button.dataset.value === state.timePeriod));
-  document.querySelectorAll("#day-buttons button").forEach(button => button.classList.toggle("active", button.dataset.value === state.dayType));
-  updateLabels();
-  if (shouldFetch) {
-    updateFromFilters();
-  }
+  controls.minAlertSeverity.disabled = controls.alertFilter.value !== "severity";
+  controls.maxAlertSeverity.disabled = controls.alertFilter.value !== "severity";
+  controls.minPrecipitation.closest(".control-group").classList.toggle("disabled", !precipitationActive);
+  controls.minSnow.closest(".control-group").classList.toggle("disabled", !snowActive);
+  labels.alert.textContent = controls.alertFilter.value === "no_alert"
+    ? "None"
+    : controls.alertFilter.value === "severity"
+      ? `${controls.minAlertSeverity.value} to ${controls.maxAlertSeverity.value}`
+      : alertSeverityByType.get(controls.alertFilter.value) || "Moderate";
+  labels.temperatureMin.textContent = `${controls.minTemperature.value}°F`;
+  labels.temperatureMax.textContent = `${controls.maxTemperature.value}°F`;
+  labels.precipitationMin.textContent = `${Number(controls.minPrecipitation.value).toFixed(2)} in`;
+  labels.precipitationMax.textContent = `${Number(controls.maxPrecipitation.value).toFixed(2)} in`;
+  labels.snowMin.textContent = `${Number(controls.minSnow.value).toFixed(1)} in`;
+  labels.snowMax.textContent = `${Number(controls.maxSnow.value).toFixed(1)} in`;
 }
 
 function params() {
   const search = new URLSearchParams();
   search.set("weather", controls.weather.value);
+  search.set("wind_level", controls.windLevel.value);
   search.set("demand_level", controls.demandLevel.value);
   search.set("time_period", state.timePeriod);
   search.set("day_type", state.dayType);
@@ -227,10 +264,10 @@ async function updateFromFilters() {
   const response = await fetch(`/api/analytics?${params().toString()}`);
   const data = await response.json();
   state.branches = data.branches;
-  state.scatter = data.scatter;
   state.timeOfDay = data.time_of_day;
-  state.stressIndex = Number(data.stress_index);
-  state.selectedBranch = bestBranch()?.branch ?? null;
+  state.attendance = data.attendance;
+  state.stations = data.stations;
+  state.selectedBranch = state.branches.find(branch => branch.metrics[state.selectedMetric] !== null)?.branch ?? null;
   labels.sample.textContent = `${Number(data.sample_size).toLocaleString()} samples`;
   controls.apply.disabled = false;
   controls.apply.textContent = "Apply Filters";
@@ -240,10 +277,10 @@ async function updateFromFilters() {
 function render() {
   updateMetricTabs();
   renderBarChart();
-  renderStressScatter();
   renderTimeScatter();
-  renderGauge();
+  renderAttendanceScatter();
   renderDetails();
+  renderStationChart();
 }
 
 function updateMetricTabs() {
@@ -267,7 +304,7 @@ function renderBarChart() {
   const node = svg.node();
   const width = node.clientWidth || 900;
   const height = node.clientHeight || 330;
-  const margin = { top: 22, right: 24, bottom: 58, left: 26 };
+  const margin = { top: 30, right: 26, bottom: 58, left: 26 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
   const data = state.branches.map(branch => ({
@@ -275,7 +312,6 @@ function renderBarChart() {
     value: branch.metrics[state.selectedMetric],
     sampleSize: branch.metrics.sample_size
   })).filter(item => item.value !== null);
-  const maxBranch = bestBranch()?.branch;
 
   svg.attr("viewBox", `0 0 ${width} ${height}`).selectAll("*").remove();
   labels.chartTitle.textContent = `${selectedMetricLabel()} Headway by Branch`;
@@ -285,11 +321,21 @@ function renderBarChart() {
     return;
   }
 
-  const x = d3.scaleBand().domain(data.map(d => d.branch)).range([0, innerWidth]).padding(0.36);
-  const y = d3.scaleLinear().domain([0, d3.max(data, d => d.value) * 1.28]).nice().range([innerHeight, 0]);
+  const x = d3.scaleBand().domain(data.map(d => d.branch)).range([0, innerWidth]).padding(0.32);
+  const maxValue = d3.max(data, d => d.value) ?? 0;
+  const allZero = maxValue <= 0;
+  const y = d3.scaleLinear().domain([0, allZero ? 1 : maxValue * 1.28]).nice().range([innerHeight, 0]);
   const group = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+  const defs = svg.append("defs");
+  defs.append("filter")
+    .attr("id", "selectedBarGlow")
+    .append("feDropShadow")
+    .attr("dx", 0)
+    .attr("dy", 0)
+    .attr("stdDeviation", 11)
+    .attr("flood-color", "#123f31")
+    .attr("flood-opacity", 0.68);
 
-  group.append("g").attr("class", "grid").call(d3.axisLeft(y).ticks(6).tickSize(-innerWidth).tickFormat(""));
   group.append("line").attr("x1", 0).attr("x2", innerWidth).attr("y1", innerHeight).attr("y2", innerHeight).attr("stroke", "#9eb7aa");
   group.append("g").attr("class", "axis").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).tickSize(0).tickPadding(16));
   group.selectAll(".axis path").remove();
@@ -298,18 +344,15 @@ function renderBarChart() {
     .data(data)
     .join("rect")
     .attr("x", d => x(d.branch))
-    .attr("y", d => y(d.value))
+    .attr("y", d => allZero ? innerHeight : y(d.value))
     .attr("width", x.bandwidth())
-    .attr("height", d => innerHeight - y(d.value))
-    .attr("rx", 0)
-    .attr("fill", d => d.branch === maxBranch ? "#ee2c31" : colors.get(d.branch))
-    .attr("stroke", d => d.branch === state.selectedBranch ? "#123f31" : "none")
-    .attr("stroke-width", d => d.branch === state.selectedBranch ? 4 : 0)
+    .attr("height", d => allZero ? 0 : innerHeight - y(d.value))
+    .attr("rx", 10)
+    .attr("fill", d => colors.get(d.branch))
+    .attr("filter", d => d.branch === state.selectedBranch ? "url(#selectedBarGlow)" : null)
     .on("click", (event, d) => {
       state.selectedBranch = d.branch;
-      renderDetails();
-      renderStressScatter();
-      renderTimeScatter();
+      render();
     })
     .on("mousemove", (event, d) => showTooltip(event, `${d.branch}<br>${selectedMetricLabel()}: ${formatMinutes(d.value)}<br>Samples: ${d.sampleSize.toLocaleString()}`))
     .on("mouseleave", hideTooltip);
@@ -317,76 +360,12 @@ function renderBarChart() {
   group.selectAll(".bar-label")
     .data(data)
     .join("text")
-    .attr("class", d => `bar-label ${d.branch === maxBranch ? "hot" : ""}`)
-    .attr("x", d => x(d.branch) + x.bandwidth() / 2 - 7)
-    .attr("y", d => y(d.value) - 10)
+    .attr("class", "bar-label")
+    .attr("x", d => x(d.branch) + x.bandwidth() / 2)
+    .attr("y", d => allZero ? innerHeight - 10 : y(d.value) - 12)
     .attr("text-anchor", "middle")
-    .attr("font-size", 24)
-    .text(d => minutesValue(d.value));
-
-  group.selectAll(".bar-unit")
-    .data(data)
-    .join("text")
-    .attr("class", "bar-unit")
-    .attr("x", d => x(d.branch) + x.bandwidth() / 2 + 27)
-    .attr("y", d => y(d.value) - 10)
-    .attr("font-size", 13)
-    .text("min");
-
-  group.selectAll(".selected-marker")
-    .data(data.filter(d => d.branch === state.selectedBranch))
-    .join("path")
-    .attr("class", "selected-marker")
-    .attr("d", d => `M ${x(d.branch) + x.bandwidth() / 2 - 8} ${innerHeight + 35} L ${x(d.branch) + x.bandwidth() / 2 + 8} ${innerHeight + 35} L ${x(d.branch) + x.bandwidth() / 2} ${innerHeight + 23} Z`)
-    .attr("fill", "#123f31");
-}
-
-function renderGauge() {
-  const svg = d3.select("#stress-gauge");
-  const node = svg.node();
-  const width = node.clientWidth || 360;
-  const height = node.clientHeight || 145;
-  const cx = width / 2;
-  const cy = height - 12;
-  const radius = Math.min(width * 0.42, 132);
-  const value = Math.max(0, Math.min(5, state.stressIndex));
-  const angle = -90 + value * 36;
-  const needleLength = radius * 0.72;
-  const needleX = cx + Math.cos((angle - 90) * Math.PI / 180) * needleLength;
-  const needleY = cy + Math.sin((angle - 90) * Math.PI / 180) * needleLength;
-  const arc = d3.arc().innerRadius(radius * 0.62).outerRadius(radius).startAngle(d => d.start).endAngle(d => d.end);
-  const slices = [
-    { start: -Math.PI / 2, end: -Math.PI / 5, fill: "#0b5d2a" },
-    { start: -Math.PI / 5, end: 0, fill: "#73bf44" },
-    { start: 0, end: Math.PI / 5, fill: "#f7c62f" },
-    { start: Math.PI / 5, end: Math.PI / 2, fill: "#ee2c31" }
-  ];
-
-  svg.attr("viewBox", `0 0 ${width} ${height}`).selectAll("*").remove();
-  svg.append("g").attr("transform", `translate(${cx},${cy})`).selectAll("path").data(slices).join("path").attr("d", arc).attr("fill", d => d.fill);
-  svg.append("path").attr("d", `M ${cx - radius * 0.52} ${cy - 4} Q ${cx} ${cy - 20} ${cx + radius * 0.52} ${cy - 4}`).attr("fill", "none").attr("stroke", "#0f5f2b").attr("stroke-width", 5);
-  svg.append("line").attr("x1", cx).attr("y1", cy - 2).attr("x2", needleX).attr("y2", needleY).attr("stroke", "#123f31").attr("stroke-width", 6).attr("stroke-linecap", "round");
-  svg.append("circle").attr("cx", cx).attr("cy", cy - 2).attr("r", 7).attr("fill", "#123f31");
-  svg.append("text").attr("x", cx).attr("y", cy - 30).attr("text-anchor", "middle").attr("font-size", 44).attr("font-weight", 840).attr("fill", "#123f31").text(value.toFixed(1));
-  labels.stress.textContent = value >= 4 ? "Severe Stress" : value >= 2.5 ? "Medium-High Stress" : value >= 1.25 ? "Medium Stress" : "No Stress";
-}
-
-function renderStressScatter() {
-  const data = state.scatter
-    .map(point => ({ ...point, headway: point.metrics.mean_headway }))
-    .filter(point => point.headway !== null);
-  renderScatter({
-    selector: "#stress-scatter",
-    data,
-    xValue: d => d.stress_index,
-    yValue: d => d.headway,
-    xDomain: [0, 5],
-    xLabel: "Stress Index",
-    yLabel: "Mean Headway Minutes",
-    xTicks: 6,
-    yFormat: d => `${Number(d / 60).toFixed(0)}`,
-    tooltipText: d => `${d.branch}<br>${d.date}<br>Stress: ${d.stress_index}<br>Mean Headway: ${formatMinutes(d.headway)}`
-  });
+    .attr("font-size", d => formatMinutes(d.value).length > 8 ? 17 : 21)
+    .text(d => formatMinutes(d.value));
 }
 
 function renderTimeScatter() {
@@ -402,6 +381,26 @@ function renderTimeScatter() {
     xTicks: 8,
     yFormat: d => `${Number(d / 60).toFixed(0)}`,
     tooltipText: d => `${d.branch}<br>${formatHour(d.hour)}<br>Mean Headway: ${formatMinutes(d.mean_headway)}<br>Samples: ${d.sample_size.toLocaleString()}`
+  });
+}
+
+function renderAttendanceScatter() {
+  const data = state.attendance.filter(point => point.mean_headway !== null && point.entries !== null);
+  const minEntries = d3.min(data, d => d.entries) ?? 0;
+  const maxEntries = d3.max(data, d => d.entries) ?? 1;
+  const padding = Math.max((maxEntries - minEntries) * 0.08, 250);
+  renderScatter({
+    selector: "#attendance-scatter",
+    data,
+    xValue: d => d.entries,
+    yValue: d => d.mean_headway,
+    xDomain: [Math.max(0, minEntries - padding), maxEntries + padding],
+    xLabel: "Branch Attendance",
+    yLabel: "Mean Headway Minutes",
+    xTicks: 6,
+    yFormat: d => `${Number(d / 60).toFixed(0)}`,
+    xFormat: d => d3.format(".2s")(d),
+    tooltipText: d => `${d.branch}<br>${d.date}<br>Attendance: ${Number(d.entries).toLocaleString()}<br>Mean Headway: ${formatMinutes(d.mean_headway)}`
   });
 }
 
@@ -426,7 +425,7 @@ function renderScatter(config) {
   const group = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
   group.append("g").attr("class", "grid").call(d3.axisLeft(y).ticks(5).tickSize(-innerWidth).tickFormat(""));
-  group.append("g").attr("class", "axis").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).ticks(config.xTicks));
+  group.append("g").attr("class", "axis").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).ticks(config.xTicks).tickFormat(config.xFormat || (d => d)));
   group.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(5).tickFormat(config.yFormat));
   group.append("text").attr("x", innerWidth / 2).attr("y", innerHeight + 40).attr("fill", "#557366").attr("text-anchor", "middle").attr("font-size", 12).attr("font-weight", 650).text(config.xLabel);
   group.append("text").attr("x", -innerHeight / 2).attr("y", -43).attr("transform", "rotate(-90)").attr("fill", "#557366").attr("text-anchor", "middle").attr("font-size", 12).attr("font-weight", 650).text(config.yLabel);
@@ -439,13 +438,10 @@ function renderScatter(config) {
     .attr("cy", d => y(config.yValue(d)))
     .attr("r", d => d.branch === state.selectedBranch ? 6 : 4.5)
     .attr("fill", d => colors.get(d.branch))
-    .attr("stroke", d => d.branch === state.selectedBranch ? "#123f31" : "#ffffff")
+    .attr("stroke", "none")
     .on("click", (event, d) => {
       state.selectedBranch = d.branch;
-      renderBarChart();
-      renderDetails();
-      renderStressScatter();
-      renderTimeScatter();
+      render();
     })
     .on("mousemove", (event, d) => showTooltip(event, config.tooltipText(d)))
     .on("mouseleave", hideTooltip);
@@ -453,32 +449,80 @@ function renderScatter(config) {
 
 function renderDetails() {
   const branch = state.branches.find(item => item.branch === state.selectedBranch) ?? bestBranch();
+  labels.detailTitle.textContent = "Selected Branch Details";
+  document.querySelectorAll(".detail-stat").forEach(button => {
+    button.classList.toggle("active", button.dataset.stationMetric === state.selectedStationMetric);
+  });
   if (!branch) {
-    labels.detailTitle.textContent = "Branch Details";
+    labels.selectedBranchPill.textContent = "Selected Branch";
+    labels.selectedBranchPill.style.background = "#197a35";
     [labels.detailMean, labels.detailMedian, labels.detailStd, labels.detailMin, labels.detailMax].forEach(label => {
       label.textContent = "0.0 min";
     });
+    labels.stationTitle.textContent = `${stationMetricMeta[state.selectedStationMetric]?.label ?? "Mean"} Headway by Station`;
     return;
   }
-  labels.detailTitle.textContent = `${branch.branch} Branch Details`;
-  labels.selectedBranch.textContent = `Selected: ${branch.branch}`;
-  labels.selectedBranch.style.background = colors.get(branch.branch);
   labels.detailMean.textContent = formatMinutes(branch.metrics.mean_headway);
   labels.detailMedian.textContent = formatMinutes(branch.metrics.median_headway);
   labels.detailStd.textContent = formatMinutes(branch.metrics.std_headway);
   labels.detailMin.textContent = formatMinutes(branch.metrics.min_headway);
   labels.detailMax.textContent = formatMinutes(branch.metrics.max_headway);
+  labels.stationTitle.textContent = `${stationMetricMeta[state.selectedStationMetric]?.label ?? "Mean"} Headway by Station on ${branch.branch}`;
+  labels.selectedBranchPill.textContent = `Selected Branch: ${branch.branch}`;
+  labels.selectedBranchPill.style.background = colors.get(branch.branch) || "#197a35";
 }
 
-function minutesValue(value) {
-  return (Number(value) / 60).toFixed(1);
+function renderStationChart() {
+  const svg = d3.select("#station-chart");
+  const node = svg.node();
+  const metricKey = state.selectedStationMetric;
+  const metricLabel = stationMetricMeta[metricKey]?.label ?? "Mean";
+  const data = (state.stations[state.selectedBranch] || []).map(item => ({
+    ...item,
+    station_metric_seconds: Number(item[metricKey]),
+    station_metric_minutes: Number(item[metricKey]) / 60
+  })).filter(item => Number.isFinite(item.station_metric_seconds));
+  const width = Math.max((data.length || 8) * 88, (node.parentElement?.clientWidth || 640) - 28);
+  const height = node.clientHeight || 272;
+  const margin = { top: 8, right: 20, bottom: 90, left: 108 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+
+  svg.attr("viewBox", `0 0 ${width} ${height}`).selectAll("*").remove();
+  svg.style("width", `${width}px`);
+  if (!data.length) {
+    svg.append("text").attr("class", "empty").attr("x", width / 2).attr("y", height / 2).text("No station data");
+    return;
+  }
+
+  const x = d3.scaleBand().domain(data.map(d => d.station)).range([0, innerWidth]).padding(0.46);
+  const y = d3.scaleLinear().domain([0, (d3.max(data, d => d.station_metric_minutes) ?? 0) * 1.12 || 1]).nice().range([innerHeight, 0]);
+  const group = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  group.append("g").attr("class", "axis").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).tickSize(0).tickPadding(8))
+    .selectAll("text")
+    .attr("transform", "rotate(-35)")
+    .style("text-anchor", "end");
+  group.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(4).tickFormat(d => `${Number(d).toFixed(1)}m`));
+
+  group.selectAll("rect")
+    .data(data)
+    .join("rect")
+    .attr("x", d => x(d.station))
+    .attr("y", d => y(d.station_metric_minutes))
+    .attr("width", x.bandwidth())
+    .attr("height", d => innerHeight - y(d.station_metric_minutes))
+    .attr("rx", 6)
+    .attr("fill", colors.get(state.selectedBranch) || "#197a35")
+    .on("mousemove", (event, d) => showTooltip(event, `${d.station}<br>${metricLabel} Headway: ${formatMinutes(d.station_metric_seconds)}<br>Samples: ${d.sample_size.toLocaleString()}`))
+    .on("mouseleave", hideTooltip);
 }
 
 function formatMinutes(value) {
   if (value === null || Number.isNaN(Number(value))) {
     return "0.0 min";
   }
-  return `${minutesValue(value)} min`;
+  return `${(Number(value) / 60).toFixed(1)} min`;
 }
 
 function formatHour(hour) {

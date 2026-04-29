@@ -63,7 +63,8 @@ def load_database():
             try_cast(DATE as date) as service_date,
             coalesce(try_cast(PRCP as double), 0) as precipitation,
             coalesce(try_cast(SNOW as double), 0) as snow,
-            coalesce(try_cast(TAVG as double), (try_cast(TMAX as double) + try_cast(TMIN as double)) / 2) as temperature
+            coalesce(try_cast(TAVG as double), (try_cast(TMAX as double) + try_cast(TMIN as double)) / 2) as temperature,
+            coalesce(try_cast(AWND as double), 0) as wind_speed
         from read_csv_auto(?, all_varchar = true)
         """,
         [weather_path],
@@ -73,6 +74,8 @@ def load_database():
         create table demand_raw as
         select
             try_cast(service_date as date) as service_date,
+            try_cast(regexp_extract(time_period, '([0-9]{2}):([0-9]{2}):([0-9]{2})', 1) as integer) * 2
+                + case when try_cast(regexp_extract(time_period, '([0-9]{2}):([0-9]{2}):([0-9]{2})', 2) as integer) >= 30 then 1 else 0 end as halfhour_slot,
             try_cast(regexp_extract(time_period, '([0-9]{2}):([0-9]{2}):([0-9]{2})', 1) as integer) as hour,
             try_cast(gated_entries as double) as entries
         from read_csv_auto(?, all_varchar = true)
@@ -85,6 +88,7 @@ def load_database():
         create table demand as
         select
             service_date,
+            halfhour_slot,
             sum(entries) as entries,
             case
                 when sum(entries) <= quantile_cont(sum(entries), 0.333333) over () then 'low'
@@ -92,7 +96,7 @@ def load_database():
                 else 'medium'
             end as demand_level
         from demand_raw
-        group by service_date
+        group by service_date, halfhour_slot
         """,
     )
     db.execute(
@@ -119,12 +123,13 @@ def load_database():
 
 def filters():
     return {
-        "weather": request.args.get("weather", "clear"),
-        "alert_filter": request.args.get("alert_filter", "no_alert"),
+        "weather": request.args.get("weather", "all"),
+        "wind_level": request.args.get("wind_level", "all"),
+        "alert_filter": request.args.get("alert_filter", "severity"),
         "min_alert_severity": number_arg("min_alert_severity", 0),
         "max_alert_severity": number_arg("max_alert_severity", 10),
-        "demand_level": request.args.get("demand_level", "medium"),
-        "time_period": request.args.get("time_period", "peak"),
+        "demand_level": request.args.get("demand_level", "all"),
+        "time_period": request.args.get("time_period", "all"),
         "day_type": request.args.get("day_type", "all"),
         "min_temperature": number_arg("min_temperature"),
         "max_temperature": number_arg("max_temperature"),
@@ -156,7 +161,7 @@ def filtered_rows(params):
     if params["weather"] == "clear":
         clauses.append("coalesce(w.precipitation, 0) = 0 and coalesce(w.snow, 0) = 0")
     if params["demand_level"] in {"low", "medium", "high"}:
-        clauses.append("d.demand_level = ?")
+        clauses.append("coalesce(d.demand_level, 'unknown') = ?")
         values.append(params["demand_level"])
     if params["time_period"] == "peak":
         clauses.append("((h.departure_second between 25200 and 36000) or (h.departure_second between 57600 and 68400))")
@@ -185,6 +190,12 @@ def filtered_rows(params):
     if params["max_temperature"] is not None:
         clauses.append("w.temperature <= ?")
         values.append(params["max_temperature"])
+    if params["wind_level"] == "calm":
+        clauses.append("coalesce(w.wind_speed, 0) < 8")
+    if params["wind_level"] == "breezy":
+        clauses.append("coalesce(w.wind_speed, 0) >= 8 and coalesce(w.wind_speed, 0) < 16")
+    if params["wind_level"] == "windy":
+        clauses.append("coalesce(w.wind_speed, 0) >= 16")
     if params["weather"] in {"rain", "all"} and params["min_precipitation"] is not None:
         clauses.append("w.precipitation >= ?")
         values.append(params["min_precipitation"])
@@ -209,18 +220,25 @@ def filtered_rows(params):
             h.stop_name,
             h.departure_time,
             h.departure_second,
+            floor(h.departure_second / 1800) as halfhour_slot,
             h.headway_branch_seconds,
             coalesce(w.precipitation, 0) as precipitation,
             coalesce(w.snow, 0) as snow,
             w.temperature,
-            coalesce(d.entries, 0) as entries,
+            w.wind_speed,
+            coalesce(ds.entries, 0) as entries,
             coalesce(d.demand_level, 'unknown') as demand_level,
             coalesce(a.max_severity, 0) as alert_severity,
             coalesce(a.alert_count, 0) as alert_count,
             coalesce(a.alert_types, '') as alert_types
         from headways h
         left join weather w on h.service_date = w.service_date
-        left join demand d on h.service_date = d.service_date
+        left join (
+            select service_date, halfhour_slot, sum(entries) as entries
+            from demand_raw
+            group by service_date, halfhour_slot
+        ) ds on h.service_date = ds.service_date and floor(h.departure_second / 1800) = ds.halfhour_slot
+        left join demand d on h.service_date = d.service_date and floor(h.departure_second / 1800) = d.halfhour_slot
         left join alerts a on h.service_date = a.service_date and h.route_id = a.route_id
         {where_sql}
     """
@@ -402,6 +420,71 @@ def time_of_day_points(frame):
     ]
 
 
+def attendance_points(frame):
+    if frame.empty:
+        return []
+    bucketed = (
+        frame.groupby(["service_date", "halfhour_slot", "branch"])
+        .agg(mean_headway=("headway_branch_seconds", "mean"), entries=("entries", "mean"), sample_size=("headway_branch_seconds", "count"))
+        .reset_index()
+        .sort_values(["service_date", "halfhour_slot", "branch"])
+    )
+    return [
+        {
+            "date": row.service_date.isoformat(),
+            "halfhour_slot": int(row.halfhour_slot),
+            "branch": row.branch,
+            "entries": finite(row.entries),
+            "mean_headway": finite(row.mean_headway),
+            "sample_size": int(row.sample_size),
+        }
+        for row in bucketed.itertuples()
+        if finite(row.mean_headway) is not None and finite(row.entries) is not None
+    ]
+
+
+def station_points(frame):
+    if frame.empty:
+        return {}
+    station_frame = frame.copy()
+    station_frame = station_frame[station_frame["headway_branch_seconds"].notna()]
+    trimmed = station_frame[
+        station_frame["headway_branch_seconds"].between(60, 3600, inclusive="both")
+    ]
+    if not trimmed.empty:
+        station_frame = trimmed
+    stations = (
+        station_frame.groupby(["branch", "stop_name"])
+        .agg(
+            mean_headway=("headway_branch_seconds", "mean"),
+            median_headway=("headway_branch_seconds", "median"),
+            std_headway=("headway_branch_seconds", "std"),
+            min_headway=("headway_branch_seconds", "min"),
+            max_headway=("headway_branch_seconds", "max"),
+            sample_size=("headway_branch_seconds", "count"),
+        )
+        .reset_index()
+        .sort_values(["branch", "stop_name"], ascending=[True, True])
+    )
+    result = {}
+    for branch in BRANCHES:
+        rows = stations[stations["branch"] == branch]
+        result[branch] = [
+            {
+                "station": row.stop_name,
+                "mean_headway": finite(row.mean_headway),
+                "median_headway": finite(row.median_headway),
+                "std_headway": finite(row.std_headway),
+                "min_headway": finite(row.min_headway),
+                "max_headway": finite(row.max_headway),
+                "sample_size": int(row.sample_size),
+            }
+            for row in rows.itertuples()
+            if finite(row.mean_headway) is not None
+        ]
+    return result
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -419,11 +502,16 @@ def initialize():
             max(w.temperature) as max_temperature,
             max(w.precipitation) as max_precipitation,
             max(w.snow) as max_snow,
+            max(w.wind_speed) as max_wind_speed,
             max(a.max_severity) as max_alert_severity,
-            max(d.entries) as max_entries
+            max(ds.entries) as max_entries
         from headways h
         left join weather w on h.service_date = w.service_date
-        left join demand d on h.service_date = d.service_date
+        left join (
+            select service_date, halfhour_slot, sum(entries) as entries
+            from demand_raw
+            group by service_date, halfhour_slot
+        ) ds on h.service_date = ds.service_date and floor(h.departure_second / 1800) = ds.halfhour_slot
         left join alerts a on h.service_date = a.service_date and h.route_id = a.route_id
         """
     ).fetchone()
@@ -438,8 +526,9 @@ def initialize():
                 "max_temperature": finite(ranges[3]),
                 "max_precipitation": finite(ranges[4]),
                 "max_snow": finite(ranges[5]),
-                "max_alert_severity": finite(ranges[6]),
-                "max_entries": finite(ranges[7]),
+                "max_wind_speed": finite(ranges[6]),
+                "max_alert_severity": finite(ranges[7]),
+                "max_entries": finite(ranges[8]),
             },
             "alert_types": db.execute(
                 """
@@ -500,6 +589,8 @@ def analytics():
             "branches": metric_bundle(frame),
             "scatter": scatter_points(frame, metric),
             "time_of_day": time_of_day_points(frame),
+            "attendance": attendance_points(frame),
+            "stations": station_points(frame),
             "stress_index": stress_index(frame, params),
             "sample_size": int(len(frame)),
         }
