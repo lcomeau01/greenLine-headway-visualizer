@@ -395,7 +395,7 @@ function renderAttendanceScatter() {
     xValue: d => d.entries,
     yValue: d => d.mean_headway,
     xDomain: [Math.max(0, minEntries - padding), maxEntries + padding],
-    xLabel: "Branch Attendance",
+    xLabel: "Green Line Attendance",
     yLabel: "Mean Headway Minutes",
     xTicks: 6,
     yFormat: d => `${Number(d / 60).toFixed(0)}`,

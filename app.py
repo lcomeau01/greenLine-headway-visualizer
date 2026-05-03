@@ -45,6 +45,9 @@ def load_database():
         select
             try_cast(service_date as date) as service_date,
             route_id,
+            trip_id,
+            try_cast(direction_id as integer) as direction_id,
+            stop_id,
             stop_name,
             try_cast(stop_departure_datetime as timestamp) as departure_time,
             try_cast(stop_departure_sec as integer) as departure_second,
@@ -103,15 +106,44 @@ def load_database():
         """
         create table alerts as
         select
-            try_cast(active_period_start_date as date) as service_date,
+            service_date,
             route_id,
-            max(try_cast(severity as integer)) as max_severity,
+            max(severity) as max_severity,
             count(distinct alert_id) as alert_count,
             string_agg(distinct effect_detail, '|') as alert_types
-        from read_csv_auto(?, all_varchar = true, union_by_name = true)
-        where route_id in ('Green-B', 'Green-C', 'Green-D', 'Green-E')
-          and active_period_start_date is not null
-          and try_cast(severity as integer) is not null
+        from (
+            select
+                generated.service_date,
+                raw.route_id,
+                raw.alert_id,
+                raw.effect_detail,
+                raw.severity
+            from (
+                select
+                    alert_id,
+                    route_id,
+                    effect_detail,
+                    try_cast(severity as integer) as severity,
+                    try_cast(active_period_start_dt as timestamp) as start_ts,
+                    coalesce(
+                        try_cast(active_period_end_dt as timestamp),
+                        try_cast(active_period_start_dt as timestamp),
+                        try_cast(active_period_start_date as timestamp)
+                    ) as end_ts
+                from read_csv_auto(?, all_varchar = true, union_by_name = true)
+                where route_id in ('Green-B', 'Green-C', 'Green-D', 'Green-E')
+                  and try_cast(severity as integer) is not null
+                  and coalesce(
+                        try_cast(active_period_start_dt as timestamp),
+                        try_cast(active_period_start_date as timestamp)
+                  ) is not null
+            ) raw
+            cross join generate_series(
+                cast(coalesce(raw.start_ts, raw.end_ts) as date),
+                cast(greatest(coalesce(raw.end_ts, raw.start_ts), coalesce(raw.start_ts, raw.end_ts)) as date),
+                interval 1 day
+            ) as generated(service_date)
+        )
         group by service_date, route_id
         """,
         [alert_glob],
@@ -217,6 +249,9 @@ def filtered_rows(params):
         select
             h.service_date,
             h.route_id as branch,
+            h.trip_id,
+            h.direction_id,
+            h.stop_id,
             h.stop_name,
             h.departure_time,
             h.departure_second,
@@ -246,7 +281,8 @@ def filtered_rows(params):
 
 
 def metric_bundle(frame):
-    grouped = frame.groupby("branch")["headway_branch_seconds"]
+    base = cleaned_headway_frame(frame)
+    grouped = base.groupby("branch")["headway_branch_seconds"]
     stats = grouped.agg(["mean", "median", "std", "min", "max", "count"]).reset_index()
     branches = []
     for branch in BRANCHES:
@@ -278,6 +314,29 @@ def finite(value):
     if value is None or pd.isna(value) or not np.isfinite(value):
         return None
     return round(float(value), 2)
+
+
+def unique_headway_frame(frame):
+    if frame.empty:
+        return frame
+    columns = ["branch", "service_date", "trip_id", "direction_id", "stop_id", "stop_name", "departure_second", "headway_branch_seconds"]
+    available = [column for column in columns if column in frame.columns]
+    return frame.drop_duplicates(subset=available)
+
+
+def cleaned_headway_frame(frame):
+    base = unique_headway_frame(frame).copy()
+    if base.empty:
+        return base
+    return base[base["headway_branch_seconds"].notna()]
+
+
+def trimmed_station_headway_frame(frame):
+    base = cleaned_headway_frame(frame)
+    if base.empty:
+        return base
+    trimmed = base[base["headway_branch_seconds"].between(60, 3600, inclusive="both")]
+    return trimmed if not trimmed.empty else base
 
 
 def stress_index(frame, params):
@@ -446,13 +505,8 @@ def attendance_points(frame):
 def station_points(frame):
     if frame.empty:
         return {}
-    station_frame = frame.copy()
-    station_frame = station_frame[station_frame["headway_branch_seconds"].notna()]
-    trimmed = station_frame[
-        station_frame["headway_branch_seconds"].between(60, 3600, inclusive="both")
-    ]
-    if not trimmed.empty:
-        station_frame = trimmed
+    station_frame = trimmed_station_headway_frame(frame)
+    station_max_frame = cleaned_headway_frame(frame)
     stations = (
         station_frame.groupby(["branch", "stop_name"])
         .agg(
@@ -460,10 +514,17 @@ def station_points(frame):
             median_headway=("headway_branch_seconds", "median"),
             std_headway=("headway_branch_seconds", "std"),
             min_headway=("headway_branch_seconds", "min"),
-            max_headway=("headway_branch_seconds", "max"),
             sample_size=("headway_branch_seconds", "count"),
         )
         .reset_index()
+    )
+    maxes = (
+        station_max_frame.groupby(["branch", "stop_name"])
+        .agg(max_headway=("headway_branch_seconds", "max"))
+        .reset_index()
+    )
+    stations = (
+        stations.merge(maxes, on=["branch", "stop_name"], how="left")
         .sort_values(["branch", "stop_name"], ascending=[True, True])
     )
     result = {}
