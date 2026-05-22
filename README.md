@@ -58,11 +58,15 @@ Then visit:
 http://localhost:8000
 
 ## Project Structure
-.
+
 ├── index.html
+
 ├── style.css
+
 ├── script.js
+
 ├── data/
+
 └── README.md
 
 Created for CS178.
